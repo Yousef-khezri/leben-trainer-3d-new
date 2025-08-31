@@ -5,52 +5,30 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, ChevronLeft, ChevronRight, Languages, Hash } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { ArrowLeft, ChevronLeft, ChevronRight, Languages, Hash, BookOpen, MapPin } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 
-// Mock questions data - in real app this would come from Supabase
-const mockQuestions = [
-  {
-    id: 1,
-    question_text: "Wann ist die Bundesrepublik Deutschland entstanden?",
-    option_a: "1947",
-    option_b: "1949",
-    option_c: "1951",
-    option_d: "1955",
-    correct_option: "b",
-    category: "general",
-    has_image: false,
-    image_url: null,
-    translations: {
-      persisch: "کی جمهوری فدرال آلمان تشکیل شد؟",
-      englisch: "When was the Federal Republic of Germany founded?",
-      russisch: "Когда была основана Федеративная Республика Германия?",
-      ukrainisch: "Коли була заснована Федеративна Республіка Німеччина?",
-      arabisch: "متى تأسست جمهورية ألمانيا الاتحادية؟",
-      türkisch: "Almanya Federal Cumhuriyeti ne zaman kuruldu?"
-    }
-  },
-  {
-    id: 2,
-    question_text: "Welche Farben hat die deutsche Flagge?",
-    option_a: "schwarz-rot-gold",
-    option_b: "rot-weiß-schwarz",
-    option_c: "schwarz-gelb-rot",
-    option_d: "blau-weiß-rot",
-    correct_option: "a",
-    category: "general",
-    has_image: false,
-    image_url: null,
-    translations: {
-      persisch: "پرچم آلمان چه رنگ‌هایی دارد؟",
-      englisch: "What colors does the German flag have?",
-      russisch: "Какие цвета у немецкого флага?",
-      ukrainisch: "Які кольори має німецький прапор?",
-      arabisch: "ما هي ألوان العلم الألماني؟",
-      türkisch: "Alman bayrağının renkleri nelerdir?"
-    }
-  }
-];
+// Types
+type Question = {
+  id: string;
+  question_text: string;
+  option_a: string;
+  option_b: string;
+  option_c: string;
+  option_d: string;
+  correct_option: string;
+  category: string;
+  has_image: boolean;
+  image_path: string | null;
+  state_id?: string | null;
+};
+
+type State = {
+  id: string;
+  name: string;
+};
 
 const languages = [
   { value: "persisch", label: "Persisch (فارسی)" },
@@ -68,17 +46,76 @@ const Training = () => {
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
   const [showTranslation, setShowTranslation] = useState(false);
   const [jumpToQuestion, setJumpToQuestion] = useState("");
+  
+  // New state for question filtering
+  const [isStateSpecific, setIsStateSpecific] = useState(false);
+  const [selectedState, setSelectedState] = useState<string>("");
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [states, setStates] = useState<State[]>([]);
+  const [loading, setLoading] = useState(true);
 
+  // Fetch states on component mount
   useEffect(() => {
-    toast({
-      title: "Supabase Integration erforderlich",
-      description: "Verbinden Sie Ihr Projekt mit Supabase, um Fragen aus der Datenbank zu laden.",
-      duration: 5000,
-    });
+    const fetchStates = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('states')
+          .select('*')
+          .order('name');
+        
+        if (error) throw error;
+        setStates(data || []);
+      } catch (error) {
+        console.error('Error fetching states:', error);
+        toast({
+          title: "Fehler beim Laden der Bundesländer",
+          description: "Die Bundesländer konnten nicht geladen werden.",
+          variant: "destructive",
+        });
+      }
+    };
+    
+    fetchStates();
   }, [toast]);
 
+  // Fetch questions based on selection
+  useEffect(() => {
+    const fetchQuestions = async () => {
+      setLoading(true);
+      try {
+        let query = supabase.from('questions').select('*');
+        
+        if (isStateSpecific && selectedState) {
+          query = query.eq('state_id', selectedState);
+        } else if (!isStateSpecific) {
+          query = query.eq('category', 'general');
+        }
+        
+        const { data, error } = await query;
+        
+        if (error) throw error;
+        setQuestions(data || []);
+        setCurrentQuestion(0);
+        setShowTranslation(false);
+      } catch (error) {
+        console.error('Error fetching questions:', error);
+        toast({
+          title: "Fehler beim Laden der Fragen",
+          description: "Die Fragen konnten nicht geladen werden.",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (!isStateSpecific || (isStateSpecific && selectedState)) {
+      fetchQuestions();
+    }
+  }, [isStateSpecific, selectedState, toast]);
+
   const nextQuestion = () => {
-    if (currentQuestion < mockQuestions.length - 1) {
+    if (currentQuestion < questions.length - 1) {
       setCurrentQuestion(currentQuestion + 1);
       setShowTranslation(false);
     }
@@ -93,14 +130,51 @@ const Training = () => {
 
   const handleJumpToQuestion = () => {
     const questionNum = parseInt(jumpToQuestion);
-    if (questionNum >= 1 && questionNum <= mockQuestions.length) {
+    if (questionNum >= 1 && questionNum <= questions.length) {
       setCurrentQuestion(questionNum - 1);
       setShowTranslation(false);
       setJumpToQuestion("");
     }
   };
 
-  const question = mockQuestions[currentQuestion];
+  const handleQuestionTypeChange = (checked: boolean) => {
+    setIsStateSpecific(checked);
+    setSelectedState("");
+    setCurrentQuestion(0);
+  };
+
+  const question = questions[currentQuestion];
+  
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-hero relative flex items-center justify-center">
+        <Card className="card-3d p-8">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-foreground">Lade Fragen...</p>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  if (questions.length === 0) {
+    return (
+      <div className="min-h-screen bg-gradient-hero relative flex items-center justify-center">
+        <Card className="card-3d p-8 text-center">
+          <p className="text-foreground mb-4">
+            {isStateSpecific && !selectedState 
+              ? "Bitte wählen Sie ein Bundesland aus." 
+              : "Keine Fragen verfügbar."}
+          </p>
+          <Button onClick={() => navigate('/')} variant="outline" className="glass">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Zurück zur Startseite
+          </Button>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-hero relative">
@@ -127,11 +201,66 @@ const Training = () => {
               Training Modus
             </h1>
             <p className="text-muted-foreground">
-              Frage {currentQuestion + 1} von {mockQuestions.length}
+              Frage {currentQuestion + 1} von {questions.length}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {isStateSpecific ? `${states.find(s => s.id === selectedState)?.name || 'Bundesland'} Fragen` : 'Allgemeine Fragen'}
             </p>
           </div>
 
           <div className="w-32"></div> {/* Spacer for centering */}
+        </motion.div>
+
+        {/* Question Type Selection */}
+        <motion.div
+          className="max-w-4xl mx-auto mb-8"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
+        >
+          <Card className="card-3d p-6">
+            <div className="flex flex-col sm:flex-row gap-6 items-center justify-center">
+              {/* Question Type Toggle */}
+              <div className="flex items-center space-x-4">
+                <div className="flex items-center gap-2">
+                  <BookOpen className="h-5 w-5 text-primary" />
+                  <span className="text-foreground">Allgemeine Fragen</span>
+                </div>
+                <Switch
+                  checked={isStateSpecific}
+                  onCheckedChange={handleQuestionTypeChange}
+                  className="data-[state=checked]:bg-gradient-primary"
+                />
+                <div className="flex items-center gap-2">
+                  <MapPin className="h-5 w-5 text-primary" />
+                  <span className="text-foreground">Bundesland Fragen</span>
+                </div>
+              </div>
+
+              {/* State Selection */}
+              {isStateSpecific && (
+                <motion.div
+                  initial={{ opacity: 0, width: 0 }}
+                  animate={{ opacity: 1, width: "auto" }}
+                  exit={{ opacity: 0, width: 0 }}
+                  className="flex items-center gap-2"
+                >
+                  <Select value={selectedState} onValueChange={setSelectedState}>
+                    <SelectTrigger className="w-64 glass border-white/20">
+                      <SelectValue placeholder="Bundesland auswählen" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+                      {states.map((state) => (
+                        <SelectItem key={state.id} value={state.id}>
+                          {state.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </motion.div>
+              )}
+            </div>
+          </Card>
         </motion.div>
 
         {/* Language Selection */}
@@ -139,7 +268,7 @@ const Training = () => {
           className="flex flex-col sm:flex-row gap-4 mb-8 justify-center items-center"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.2 }}
+          transition={{ duration: 0.6, delay: 0.3 }}
         >
           <div className="flex items-center gap-2">
             <Languages className="h-5 w-5 text-primary" />
@@ -149,7 +278,7 @@ const Training = () => {
             <SelectTrigger className="w-64 glass border-white/20">
               <SelectValue placeholder="Sprache auswählen" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
               {languages.map((lang) => (
                 <SelectItem key={lang.value} value={lang.value}>
                   {lang.label}
@@ -164,7 +293,7 @@ const Training = () => {
           className="max-w-4xl mx-auto mb-8"
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.6, delay: 0.4 }}
+          transition={{ duration: 0.6, delay: 0.5 }}
         >
           <AnimatePresence mode="wait">
             <motion.div
@@ -175,10 +304,10 @@ const Training = () => {
               transition={{ duration: 0.5, ease: "easeInOut" }}
             >
               <Card className="card-3d p-8 space-y-6">
-                {question.has_image && question.image_url && (
+                {question.has_image && question.image_path && (
                   <div className="mb-6">
                     <img
-                      src={question.image_url}
+                      src={`https://tnnjkbipydrhccwxofzm.supabase.co/storage/v1/object/public/question-images/${question.image_path}`}
                       alt="Frage Illustration"
                       className="w-full max-w-md mx-auto rounded-lg shadow-lg"
                     />
@@ -190,7 +319,7 @@ const Training = () => {
                     {question.question_text}
                   </h2>
 
-                  {showTranslation && selectedLanguage && question.translations[selectedLanguage as keyof typeof question.translations] && (
+                  {showTranslation && selectedLanguage && (
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: "auto" }}
@@ -198,7 +327,8 @@ const Training = () => {
                       className="p-4 bg-primary/10 rounded-lg border border-primary/20"
                     >
                       <p className="text-lg text-primary">
-                        {question.translations[selectedLanguage as keyof typeof question.translations]}
+                        {/* Note: Translation integration would go here */}
+                        Übersetzung für {selectedLanguage} wird geladen...
                       </p>
                     </motion.div>
                   )}
@@ -273,7 +403,7 @@ const Training = () => {
 
             <Button
               onClick={nextQuestion}
-              disabled={currentQuestion === mockQuestions.length - 1}
+              disabled={currentQuestion === questions.length - 1}
               variant="outline"
               size="lg"
               className="glass border-white/20"
@@ -293,7 +423,7 @@ const Training = () => {
               className="w-24 glass border-white/20"
               type="number"
               min="1"
-              max={mockQuestions.length}
+              max={questions.length}
             />
             <Button
               onClick={handleJumpToQuestion}
