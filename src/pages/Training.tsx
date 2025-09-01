@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { ArrowLeft, ChevronLeft, ChevronRight, Languages, Hash, BookOpen, MapPin } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Languages, Hash, BookOpen, MapPin, CheckCircle, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -53,6 +53,9 @@ const Training = () => {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [states, setStates] = useState<State[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedAnswer, setSelectedAnswer] = useState<string>("");
+  const [showCorrectAnswer, setShowCorrectAnswer] = useState(false);
+  const [answerTimer, setAnswerTimer] = useState<NodeJS.Timeout | null>(null);
 
   // Fetch states on component mount
   useEffect(() => {
@@ -118,6 +121,16 @@ const Training = () => {
     if (currentQuestion < questions.length - 1) {
       setCurrentQuestion(currentQuestion + 1);
       setShowTranslation(false);
+      resetAnswerState();
+    }
+  };
+
+  const resetAnswerState = () => {
+    setSelectedAnswer("");
+    setShowCorrectAnswer(false);
+    if (answerTimer) {
+      clearTimeout(answerTimer);
+      setAnswerTimer(null);
     }
   };
 
@@ -125,6 +138,7 @@ const Training = () => {
     if (currentQuestion > 0) {
       setCurrentQuestion(currentQuestion - 1);
       setShowTranslation(false);
+      resetAnswerState();
     }
   };
 
@@ -133,8 +147,71 @@ const Training = () => {
     if (questionNum >= 1 && questionNum <= questions.length) {
       setCurrentQuestion(questionNum - 1);
       setShowTranslation(false);
+      resetAnswerState();
       setJumpToQuestion("");
     }
+  };
+
+  const handleAnswerSelect = (answer: string) => {
+    if (selectedAnswer || showCorrectAnswer) return;
+    
+    setSelectedAnswer(answer);
+    setShowCorrectAnswer(true);
+    
+    if (answerTimer) {
+      clearTimeout(answerTimer);
+    }
+  };
+
+  // Auto-reveal correct answer after 10 seconds
+  useEffect(() => {
+    const currentQuestionData = questions[currentQuestion];
+    if (!showCorrectAnswer && !selectedAnswer && currentQuestionData) {
+      const timer = setTimeout(() => {
+        setShowCorrectAnswer(true);
+      }, 10000);
+      setAnswerTimer(timer);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [currentQuestion, showCorrectAnswer, selectedAnswer, questions]);
+
+  const getTranslatedText = (originalText: string, language: string): string => {
+    // Simplified translation mapping - in a real app, this would use a translation API
+    const translations: Record<string, Record<string, string>> = {
+      persisch: {
+        "Wann ist die Bundesrepublik Deutschland entstanden?": "جمهوری فدرال آلمان چه زمانی تأسیس شد؟",
+        "Welche Farben hat die deutsche Flagge?": "پرچم آلمان چه رنگ‌هایی دارد؟",
+        "Was ist die Hauptstadt von Deutschland?": "پایتخت آلمان کجاست؟"
+      },
+      englisch: {
+        "Wann ist die Bundesrepublik Deutschland entstanden?": "When was the Federal Republic of Germany established?",
+        "Welche Farben hat die deutsche Flagge?": "What colors does the German flag have?",
+        "Was ist die Hauptstadt von Deutschland?": "What is the capital of Germany?"
+      },
+      russisch: {
+        "Wann ist die Bundesrepublik Deutschland entstanden?": "Когда была создана Федеративная Республика Германия?",
+        "Welche Farben hat die deutsche Flagge?": "Какие цвета у немецкого флага?",
+        "Was ist die Hauptstadt von Deutschland?": "Какая столица Германии?"
+      },
+      ukrainisch: {
+        "Wann ist die Bundesrepublik Deutschland entstanden?": "Коли була створена Федеративна Республіка Німеччина?",
+        "Welche Farben hat die deutsche Flagge?": "Які кольори має німецький прапор?",
+        "Was ist die Hauptstadt von Deutschland?": "Яка столиця Німеччини?"
+      },
+      arabisch: {
+        "Wann ist die Bundesrepublik Deutschland entstanden?": "متى تأسست جمهورية ألمانيا الاتحادية؟",
+        "Welche Farben hat die deutsche Flagge?": "ما هي ألوان العلم الألماني؟",
+        "Was ist die Hauptstadt von Deutschland?": "ما هي عاصمة ألمانيا؟"
+      },
+      türkisch: {
+        "Wann ist die Bundesrepublik Deutschland entstanden?": "Almanya Federal Cumhuriyeti ne zaman kuruldu?",
+        "Welche Farben hat die deutsche Flagge?": "Alman bayrağının renkleri nelerdir?",
+        "Was ist die Hauptstadt von Deutschland?": "Almanya'nın başkenti nedir?"
+      }
+    };
+    
+    return translations[language]?.[originalText] || `[${language} translation for: ${originalText}]`;
   };
 
   const handleQuestionTypeChange = (checked: boolean) => {
@@ -326,10 +403,17 @@ const Training = () => {
                       exit={{ opacity: 0, height: 0 }}
                       className="p-4 bg-primary/10 rounded-lg border border-primary/20"
                     >
-                      <p className="text-lg text-primary">
-                        {/* Note: Translation integration would go here */}
-                        Übersetzung für {selectedLanguage} wird geladen...
-                      </p>
+                      <div className="space-y-3">
+                        <h3 className="text-lg font-semibold text-primary">
+                          {getTranslatedText(question.question_text, selectedLanguage)}
+                        </h3>
+                        <div className="grid grid-cols-1 gap-2">
+                          <p className="text-primary/80"><strong>A:</strong> {getTranslatedText(question.option_a, selectedLanguage)}</p>
+                          <p className="text-primary/80"><strong>B:</strong> {getTranslatedText(question.option_b, selectedLanguage)}</p>
+                          <p className="text-primary/80"><strong>C:</strong> {getTranslatedText(question.option_c, selectedLanguage)}</p>
+                          <p className="text-primary/80"><strong>D:</strong> {getTranslatedText(question.option_d, selectedLanguage)}</p>
+                        </div>
+                      </div>
                     </motion.div>
                   )}
 
@@ -339,28 +423,45 @@ const Training = () => {
                       { key: "b", text: question.option_b },
                       { key: "c", text: question.option_c },
                       { key: "d", text: question.option_d }
-                    ].map((option) => (
-                      <motion.div
-                        key={option.key}
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                      >
-                        <Card
-                          className={`p-4 cursor-pointer transition-all duration-300 hover:bg-primary/10 hover:border-primary/30 ${
-                            question.correct_option === option.key
-                              ? "border-success bg-success/10"
-                              : "border-border hover:border-primary/30"
-                          }`}
+                    ].map((option) => {
+                      let cardClass = "p-4 cursor-pointer transition-all duration-300 border-border";
+                      
+                      if (showCorrectAnswer) {
+                        if (option.key === question.correct_option) {
+                          cardClass += " border-success bg-success/20 text-success";
+                        } else if (option.key === selectedAnswer && option.key !== question.correct_option) {
+                          cardClass += " border-destructive bg-destructive/20 text-destructive";
+                        }
+                      } else {
+                        cardClass += " hover:bg-primary/10 hover:border-primary/30";
+                      }
+
+                      return (
+                        <motion.div
+                          key={option.key}
+                          whileHover={!showCorrectAnswer ? { scale: 1.02 } : {}}
+                          whileTap={!showCorrectAnswer ? { scale: 0.98 } : {}}
                         >
-                          <div className="flex items-center space-x-3">
-                            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold">
-                              {option.key.toUpperCase()}
+                          <Card
+                            className={cardClass}
+                            onClick={() => handleAnswerSelect(option.key)}
+                          >
+                            <div className="flex items-center space-x-3">
+                              <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold">
+                                {option.key.toUpperCase()}
+                              </div>
+                              <p className="text-foreground flex-1">{option.text}</p>
+                              {showCorrectAnswer && option.key === question.correct_option && (
+                                <CheckCircle className="h-5 w-5 text-success" />
+                              )}
+                              {showCorrectAnswer && option.key === selectedAnswer && option.key !== question.correct_option && (
+                                <XCircle className="h-5 w-5 text-destructive" />
+                              )}
                             </div>
-                            <p className="text-foreground">{option.text}</p>
-                          </div>
-                        </Card>
-                      </motion.div>
-                    ))}
+                          </Card>
+                        </motion.div>
+                      );
+                    })}
                   </div>
                 </div>
 
