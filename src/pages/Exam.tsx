@@ -532,48 +532,85 @@ const Exam = () => {
                     </motion.div>
                   )}
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4">
                     {[
                       { key: "a", text: currentQuestion.option_a },
                       { key: "b", text: currentQuestion.option_b },
                       { key: "c", text: currentQuestion.option_c },
                       { key: "d", text: currentQuestion.option_d }
                     ].map((option) => {
-                      let buttonClass = "p-4 cursor-pointer transition-all duration-300 border-border";
+                      const isSelected = selectedAnswer === option.key;
+                      const isCorrect = option.key === currentQuestion.correct_option;
+                      const isWrong = showResult && isSelected && !isCorrect;
+                      
+                      let cardClass = "relative p-4 cursor-pointer transition-all duration-300 border-2 rounded-lg";
                       
                       if (showResult) {
-                        if (option.key === currentQuestion.correct_option) {
-                          buttonClass += " border-success bg-success/20 text-success";
-                        } else if (option.key === selectedAnswer && option.key !== currentQuestion.correct_option) {
-                          buttonClass += " border-destructive bg-destructive/20 text-destructive";
+                        if (isCorrect) {
+                          cardClass += " border-green-500 bg-green-50 text-green-800 shadow-green-200 shadow-lg";
+                        } else if (isWrong) {
+                          cardClass += " border-red-500 bg-red-50 text-red-800 shadow-red-200 shadow-lg";
+                        } else {
+                          cardClass += " border-gray-200 bg-gray-50 text-gray-600";
                         }
                       } else {
-                        buttonClass += " hover:bg-primary/10 hover:border-primary/30";
+                        if (isSelected) {
+                          cardClass += " border-primary bg-primary/10 text-primary shadow-lg transform scale-[1.02]";
+                        } else {
+                          cardClass += " border-border hover:border-primary/50 hover:bg-primary/5 hover:shadow-md hover:transform hover:scale-[1.01]";
+                        }
                       }
 
                       return (
                         <motion.div
                           key={option.key}
-                          whileHover={!showResult ? { scale: 1.02 } : {}}
+                          className="w-full"
+                          whileHover={!showResult ? { y: -2 } : {}}
                           whileTap={!showResult ? { scale: 0.98 } : {}}
+                          transition={{ duration: 0.2 }}
                         >
-                          <Card
-                            className={buttonClass}
+                          <div
+                            className={cardClass}
                             onClick={() => !showResult && handleAnswerSelect(option.key)}
+                            style={{ minHeight: '60px' }}
                           >
-                            <div className="flex items-center space-x-3">
-                              <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold">
+                            <div className="flex items-center space-x-4 w-full">
+                              <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-300 ${
+                                showResult 
+                                  ? isCorrect 
+                                    ? 'bg-green-500 text-white' 
+                                    : isWrong 
+                                      ? 'bg-red-500 text-white'
+                                      : 'bg-gray-300 text-gray-600'
+                                  : isSelected
+                                    ? 'bg-primary text-white'
+                                    : 'bg-primary/20 text-primary'
+                              }`}>
                                 {option.key.toUpperCase()}
                               </div>
-                              <p className="flex-1 text-foreground">{option.text}</p>
-                              {showResult && option.key === currentQuestion.correct_option && (
-                                <CheckCircle className="h-5 w-5 text-success" />
-                              )}
-                              {showResult && option.key === selectedAnswer && option.key !== currentQuestion.correct_option && (
-                                <XCircle className="h-5 w-5 text-destructive" />
-                              )}
+                              <p className="text-current flex-1 font-medium leading-relaxed">{option.text}</p>
+                              <div className="flex items-center">
+                                {showResult && isCorrect && (
+                                  <motion.div
+                                    initial={{ scale: 0, rotate: 180 }}
+                                    animate={{ scale: 1, rotate: 0 }}
+                                    transition={{ duration: 0.3, delay: 0.1 }}
+                                  >
+                                    <CheckCircle className="h-6 w-6 text-green-600" />
+                                  </motion.div>
+                                )}
+                                {showResult && isWrong && (
+                                  <motion.div
+                                    initial={{ scale: 0, rotate: 180 }}
+                                    animate={{ scale: 1, rotate: 0 }}
+                                    transition={{ duration: 0.3, delay: 0.1 }}
+                                  >
+                                    <XCircle className="h-6 w-6 text-red-600" />
+                                  </motion.div>
+                                )}
+                              </div>
                             </div>
-                          </Card>
+                          </div>
                         </motion.div>
                       );
                     })}
