@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,42 @@ const languages = [
   { value: "arabisch", label: "العربية" },
   { value: "türkisch", label: "Türkçe" }
 ];
+
+// Normalize various forms of correct_option to 'a' | 'b' | 'c' | 'd'
+function normalizeCorrectOption(
+  value: any,
+  q?: { option_a: string; option_b: string; option_c: string; option_d: string }
+): 'a' | 'b' | 'c' | 'd' | null {
+  if (value === undefined || value === null) return null;
+  const raw = String(value).trim().toLowerCase();
+  if (!raw) return null;
+
+  if (['a', 'b', 'c', 'd'].includes(raw)) return raw as any;
+
+  if (['1', '2', '3', '4'].includes(raw)) {
+    return (['a', 'b', 'c', 'd'][parseInt(raw, 10) - 1]) as any;
+  }
+
+  if (raw.startsWith('option_')) {
+    const last = raw.slice(-1);
+    if (['a', 'b', 'c', 'd'].includes(last)) return last as any;
+  }
+
+  const first = raw[0];
+  if (['a', 'b', 'c', 'd'].includes(first)) return first as any;
+
+  if (q) {
+    const mapText: Record<string, 'a' | 'b' | 'c' | 'd'> = {};
+    if (q.option_a) mapText[q.option_a.trim().toLowerCase()] = 'a';
+    if (q.option_b) mapText[q.option_b.trim().toLowerCase()] = 'b';
+    if (q.option_c) mapText[q.option_c.trim().toLowerCase()] = 'c';
+    if (q.option_d) mapText[q.option_d.trim().toLowerCase()] = 'd';
+    const byText = mapText[raw];
+    if (byText) return byText;
+  }
+
+  return null;
+}
 
 const Exam = () => {
   const navigate = useNavigate();
@@ -95,7 +131,7 @@ const Exam = () => {
 
   const generateExamQuestions = async (stateId: string): Promise<Question[]> => {
     try {
-      // Fetch general questions (30 random)
+      // Fetch general questions (30 random) - assumes DB categories are clean; otherwise use .is('state_id', null)
       const { data: generalQuestions, error: generalError } = await supabase
         .from('questions')
         .select('*')
@@ -156,7 +192,7 @@ const Exam = () => {
       },
       arabisch: {
         "Wann ist die Bundesrepublik Deutschland entstanden?": "متى تأسست جمهورية ألمانيا الاتحادية؟",
-        "Welche Farben hat die deutsche Flagge?": "ما هي ألوان العلم الألماني؟",
+        "Welche Farben hat die deutsche Flagge؟": "ما هي ألوان العلم الألماني؟",
         "Was ist die Hauptstadt von Deutschland?": "ما هي عاصمة ألمانيا؟"
       },
       türkisch: {
@@ -197,14 +233,23 @@ const Exam = () => {
     }
   };
 
+  // helper to compare answers robustly
+  const isAnswerCorrect = (answer: string, q: Question | undefined) => {
+    if (!q) return false;
+    const normalized = normalizeCorrectOption(q.correct_option, q);
+    if (!normalized) return false;
+    return answer === normalized;
+  };
+
   const handleAnswerSelect = (answer: string) => {
     if (selectedAnswer || showResult) return;
     
     setSelectedAnswer(answer);
     setShowResult(true);
 
-    const isCorrect = answer === examQuestions[currentQuestionIndex].correct_option;
-    if (isCorrect) {
+    const q = examQuestions[currentQuestionIndex];
+    const correct = isAnswerCorrect(answer, q);
+    if (correct) {
       setCorrectAnswers(prev => prev + 1);
     }
 
@@ -238,14 +283,20 @@ const Exam = () => {
     setExamQuestions([]);
   };
 
-  const progress = examState === "running" ? ((currentQuestionIndex + 1) / examQuestions.length) * 100 : 0;
+  const progress = examState === "running" && examQuestions.length > 0 ? ((currentQuestionIndex + 1) / examQuestions.length) * 100 : 0;
   const passed = correctAnswers >= 17; // Need 17+ correct answers to pass
   const currentQuestion = examQuestions[currentQuestionIndex];
+
+  // normalized correct key for UI highlighting
+  const normalizedCorrectKey = useMemo(
+    () => normalizeCorrectOption(currentQuestion?.correct_option, currentQuestion),
+    [currentQuestion]
+  );
 
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-hero flex items-center justify-center">
-        <Card className="card-3d p-8">
+        <Card className="card-3d p-8 space-y-6" style={{ pointerEvents: 'none' }}>
           <div className="text-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
             <p className="text-foreground">Lade Prüfungsdaten...</p>
@@ -314,7 +365,7 @@ const Exam = () => {
                   </Select>
                 </div>
 
-                <div>
+                {/* <div>
                   <label className="block text-sm font-medium text-foreground mb-2">
                     Übersetzungssprache (optional):
                   </label>
@@ -330,7 +381,7 @@ const Exam = () => {
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
+                </div> */}
 
                 <div className="bg-muted/20 p-4 rounded-lg">
                   <h3 className="font-semibold text-foreground mb-2">Prüfungsablauf:</h3>
@@ -345,7 +396,7 @@ const Exam = () => {
                 <Button
                   onClick={startExam}
                   size="lg"
-                  className="bg-gradient-primary hover:bg-gradient-primary glow-hover w-full py-6 text-xl"
+                  className="bg-gradient-primary hover:bg-gradient-primary w-full py-6 text-xl cursor-pointer"
                 >
                   <Award className="mr-3 h-6 w-6" />
                   Prüfung starten
@@ -409,7 +460,8 @@ const Exam = () => {
                 <Button
                   onClick={resetExam}
                   size="lg"
-                  className="bg-gradient-primary hover:bg-gradient-primary glow-hover"
+                  //className="bg-gradient-primary hover:bg-gradient-primary glow-hover"
+                  className="bg-gradient-primary hover:bg-gradient-primary"
                 >
                   <RefreshCw className="mr-2 h-5 w-5" />
                   Erneut versuchen
@@ -482,7 +534,7 @@ const Exam = () => {
 
         {/* Question */}
         <motion.div
-          className="max-w-4xl mx-auto"
+          className="max-w-4xl mx-auto relative"
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.6, delay: 0.4 }}
@@ -490,61 +542,49 @@ const Exam = () => {
           <AnimatePresence mode="wait">
             <motion.div
               key={currentQuestionIndex}
+              className="w-full max-w-4xl mx-auto relative"
               initial={{ x: 300, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: -300, opacity: 0 }}
               transition={{ duration: 0.5, ease: "easeInOut" }}
             >
-              <Card className="card-3d p-8 space-y-6">
-                {currentQuestion.has_image && currentQuestion.image_path && (
+              {/* Isolated stacking context to avoid invisible overlays; ensure clicks on options */}
+              <Card className="card-3d p-8 space-y-6 relative z-[100] isolate overflow-visible">
+                {currentQuestion?.has_image && currentQuestion?.image_path && (
                   <div className="mb-6">
                     <img
-                      src={`https://tnnjkbipydrhccwxofzm.supabase.co/storage/v1/object/public/question-images/${currentQuestion.image_path}`}
+                      src={
+                        currentQuestion.image_path.startsWith("http")
+                          ? currentQuestion.image_path
+                          : `https://tnnjkbipydrhccwxofzm.supabase.co/storage/v1/object/public/question-images/${currentQuestion.image_path}`
+                      }
                       alt="Frage Illustration"
                       className="w-full max-w-md mx-auto rounded-lg shadow-lg"
+                      loading="lazy"
                     />
                   </div>
                 )}
 
                 <div className="space-y-4">
                   <h2 className="text-2xl font-semibold text-foreground mb-6">
-                    {currentQuestion.question_text}
+                    {currentQuestion?.question_text}
                   </h2>
 
-                  {showTranslation && selectedLanguage && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="p-4 bg-primary/10 rounded-lg border border-primary/20 mb-4"
-                    >
-                      <div className="space-y-3">
-                        <h3 className="text-lg font-semibold text-primary">
-                          {getTranslatedText(currentQuestion.question_text, selectedLanguage)}
-                        </h3>
-                        <div className="grid grid-cols-1 gap-2">
-                          <p className="text-primary/80"><strong>A:</strong> {getTranslatedText(currentQuestion.option_a, selectedLanguage)}</p>
-                          <p className="text-primary/80"><strong>B:</strong> {getTranslatedText(currentQuestion.option_b, selectedLanguage)}</p>
-                          <p className="text-primary/80"><strong>C:</strong> {getTranslatedText(currentQuestion.option_c, selectedLanguage)}</p>
-                          <p className="text-primary/80"><strong>D:</strong> {getTranslatedText(currentQuestion.option_d, selectedLanguage)}</p>
-                        </div>
-                      </div>
-                    </motion.div>
-                  )}
-
-                  <div className="grid grid-cols-1 gap-4">
-                    {[
+                  {/* Options: ensure they are above any overlays and clickable */}
+                  <div className="grid grid-cols-1 gap-4 relative z-[200] pointer-events-auto">
+                    {currentQuestion && [
                       { key: "a", text: currentQuestion.option_a },
                       { key: "b", text: currentQuestion.option_b },
                       { key: "c", text: currentQuestion.option_c },
                       { key: "d", text: currentQuestion.option_d }
                     ].map((option) => {
                       const isSelected = selectedAnswer === option.key;
-                      const isCorrect = option.key === currentQuestion.correct_option;
+                      const isCorrect = normalizedCorrectKey ? option.key === normalizedCorrectKey : false;
                       const isWrong = showResult && isSelected && !isCorrect;
                       
-                      let cardClass = "relative p-4 cursor-pointer transition-all duration-300 border-2 rounded-lg";
-                      
+                      let cardClass =
+                        "relative p-4 w-full text-left cursor-pointer transition-all duration-300 border-2 rounded-lg bg-background";
+
                       if (showResult) {
                         if (isCorrect) {
                           cardClass += " border-green-500 bg-green-50 text-green-800 shadow-green-200 shadow-lg";
@@ -564,31 +604,37 @@ const Exam = () => {
                       return (
                         <motion.div
                           key={option.key}
-                          className="w-full"
+                          className="w-full relative z-[200] pointer-events-auto"
                           whileHover={!showResult ? { y: -2 } : {}}
                           whileTap={!showResult ? { scale: 0.98 } : {}}
                           transition={{ duration: 0.2 }}
                         >
-                          <div
+                          <button
+                            type="button"
                             className={cardClass}
                             onClick={() => !showResult && handleAnswerSelect(option.key)}
+                            disabled={showResult}
                             style={{ minHeight: '60px' }}
                           >
                             <div className="flex items-center space-x-4 w-full">
-                              <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-300 ${
-                                showResult 
-                                  ? isCorrect 
-                                    ? 'bg-green-500 text-white' 
-                                    : isWrong 
-                                      ? 'bg-red-500 text-white'
-                                      : 'bg-gray-300 text-gray-600'
-                                  : isSelected
-                                    ? 'bg-primary text-white'
-                                    : 'bg-primary/20 text-primary'
-                              }`}>
+                              <div
+                                className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-300 ${
+                                  showResult
+                                    ? isCorrect
+                                      ? "bg-green-500 text-white"
+                                      : isWrong
+                                      ? "bg-red-500 text-white"
+                                      : "bg-gray-300 text-gray-600"
+                                    : isSelected
+                                    ? "bg-primary text-white"
+                                    : "bg-primary/20 text-primary"
+                                }`}
+                              >
                                 {option.key.toUpperCase()}
                               </div>
-                              <p className="text-current flex-1 font-medium leading-relaxed">{option.text}</p>
+                              <p className="text-current flex-1 font-medium leading-relaxed">
+                                {option.text}
+                              </p>
                               <div className="flex items-center">
                                 {showResult && isCorrect && (
                                   <motion.div
@@ -610,13 +656,14 @@ const Exam = () => {
                                 )}
                               </div>
                             </div>
-                          </div>
+                          </button>
                         </motion.div>
                       );
                     })}
                   </div>
                 </div>
 
+                {/* Translation toggle kept commented to avoid overlay issues:
                 {selectedLanguage && (
                   <div className="flex justify-center">
                     <Button
@@ -629,7 +676,7 @@ const Exam = () => {
                       {showTranslation ? "Übersetzung ausblenden" : "Übersetzung anzeigen"}
                     </Button>
                   </div>
-                )}
+                )} */}
               </Card>
             </motion.div>
           </AnimatePresence>

@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,14 @@ type State = {
   name: string;
 };
 
+type Translation = {
+  question_text: string;
+  option_a?: string | null;
+  option_b?: string | null;
+  option_c?: string | null;
+  option_d?: string | null;
+};
+
 const languages = [
   { value: "persisch", label: "Persisch (فارسی)" },
   { value: "englisch", label: "English" },
@@ -39,11 +48,49 @@ const languages = [
   { value: "türkisch", label: "Türkçe" }
 ];
 
+// Normalize various forms of correct_option to 'a' | 'b' | 'c' | 'd'
+function normalizeCorrectOption(
+  value: any,
+  q?: { option_a: string; option_b: string; option_c: string; option_d: string }
+): 'a' | 'b' | 'c' | 'd' | null {
+  if (value === undefined || value === null) return null;
+  let raw = String(value).trim().toLowerCase();
+  if (!raw) return null;
+
+  if (['a', 'b', 'c', 'd'].includes(raw)) return raw as any;
+
+  if (['1', '2', '3', '4'].includes(raw)) {
+    return (['a', 'b', 'c', 'd'][parseInt(raw, 10) - 1]) as any;
+  }
+
+  if (raw.startsWith('option_')) {
+    const last = raw.slice(-1);
+    if (['a', 'b', 'c', 'd'].includes(last)) return last as any;
+  }
+
+  const first = raw[0];
+  if (['a', 'b', 'c', 'd'].includes(first)) return first as any;
+
+  if (q) {
+    const mapText: Record<string, 'a' | 'b' | 'c' | 'd'> = {};
+    if (q.option_a) mapText[q.option_a.trim().toLowerCase()] = 'a';
+    if (q.option_b) mapText[q.option_b.trim().toLowerCase()] = 'b';
+    if (q.option_c) mapText[q.option_c.trim().toLowerCase()] = 'c';
+    if (q.option_d) mapText[q.option_d.trim().toLowerCase()] = 'd';
+    const byText = mapText[raw];
+    if (byText) return byText;
+  }
+
+  return null;
+}
+
 const Training = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [currentQuestion, setCurrentQuestion] = useState(0);
-  const [selectedLanguage, setSelectedLanguage] = useState<string>("");
+
+  // Default language: persisch
+  const [selectedLanguage, setSelectedLanguage] = useState<string>("persisch");
   const [showTranslation, setShowTranslation] = useState(false);
   const [jumpToQuestion, setJumpToQuestion] = useState("");
   
@@ -55,7 +102,12 @@ const Training = () => {
   const [loading, setLoading] = useState(true);
   const [selectedAnswer, setSelectedAnswer] = useState<string>("");
   const [showCorrectAnswer, setShowCorrectAnswer] = useState(false);
-  const [answerTimer, setAnswerTimer] = useState<NodeJS.Timeout | null>(null);
+  const [answerTimer, setAnswerTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
+
+  // Translation state and cache
+  const [translation, setTranslation] = useState<Translation | null>(null);
+  const [translationLoading, setTranslationLoading] = useState(false);
+  const translationsCache = useRef<Record<string, Translation>>({});
 
   // Fetch states on component mount
   useEffect(() => {
@@ -100,6 +152,13 @@ const Training = () => {
         setQuestions(data || []);
         setCurrentQuestion(0);
         setShowTranslation(false);
+        setTranslation(null);
+        setSelectedAnswer("");
+        setShowCorrectAnswer(false);
+        if (answerTimer) {
+          clearTimeout(answerTimer);
+          setAnswerTimer(null);
+        }
       } catch (error) {
         console.error('Error fetching questions:', error);
         toast({
@@ -121,6 +180,7 @@ const Training = () => {
     if (currentQuestion < questions.length - 1) {
       setCurrentQuestion(currentQuestion + 1);
       setShowTranslation(false);
+      setTranslation(null);
       resetAnswerState();
     }
   };
@@ -138,6 +198,7 @@ const Training = () => {
     if (currentQuestion > 0) {
       setCurrentQuestion(currentQuestion - 1);
       setShowTranslation(false);
+      setTranslation(null);
       resetAnswerState();
     }
   };
@@ -147,19 +208,19 @@ const Training = () => {
     if (questionNum >= 1 && questionNum <= questions.length) {
       setCurrentQuestion(questionNum - 1);
       setShowTranslation(false);
+      setTranslation(null);
       resetAnswerState();
       setJumpToQuestion("");
     }
   };
 
   const handleAnswerSelect = (answer: string) => {
-    if (selectedAnswer || showCorrectAnswer) return;
-    
+    if (selectedAnswer || showCorrectAnswer) return; // avoid multiple
     setSelectedAnswer(answer);
     setShowCorrectAnswer(true);
-    
     if (answerTimer) {
       clearTimeout(answerTimer);
+      setAnswerTimer(null);
     }
   };
 
@@ -171,48 +232,76 @@ const Training = () => {
         setShowCorrectAnswer(true);
       }, 10000);
       setAnswerTimer(timer);
-      
       return () => clearTimeout(timer);
     }
+    return () => {
+      if (answerTimer) clearTimeout(answerTimer);
+    };
   }, [currentQuestion, showCorrectAnswer, selectedAnswer, questions]);
 
-  const getTranslatedText = (originalText: string, language: string): string => {
-    // Simplified translation mapping - in a real app, this would use a translation API
-    const translations: Record<string, Record<string, string>> = {
-      persisch: {
-        "Wann ist die Bundesrepublik Deutschland entstanden?": "جمهوری فدرال آلمان چه زمانی تأسیس شد؟",
-        "Welche Farben hat die deutsche Flagge?": "پرچم آلمان چه رنگ‌هایی دارد؟",
-        "Was ist die Hauptstadt von Deutschland?": "پایتخت آلمان کجاست؟"
-      },
-      englisch: {
-        "Wann ist die Bundesrepublik Deutschland entstanden?": "When was the Federal Republic of Germany established?",
-        "Welche Farben hat die deutsche Flagge?": "What colors does the German flag have?",
-        "Was ist die Hauptstadt von Deutschland?": "What is the capital of Germany?"
-      },
-      russisch: {
-        "Wann ist die Bundesrepublik Deutschland entstanden?": "Когда была создана Федеративная Республика Германия?",
-        "Welche Farben hat die deutsche Flagge?": "Какие цвета у немецкого флага?",
-        "Was ist die Hauptstadt von Deutschland?": "Какая столица Германии?"
-      },
-      ukrainisch: {
-        "Wann ist die Bundesrepublik Deutschland entstanden?": "Коли була створена Федеративна Республіка Німеччина?",
-        "Welche Farben hat die deutsche Flagge?": "Які кольори має німецький прапор?",
-        "Was ist die Hauptstadt von Deutschland?": "Яка столиця Німеччини?"
-      },
-      arabisch: {
-        "Wann ist die Bundesrepublik Deutschland entstanden?": "متى تأسست جمهورية ألمانيا الاتحادية؟",
-        "Welche Farben hat die deutsche Flagge?": "ما هي ألوان العلم الألماني؟",
-        "Was ist die Hauptstadt von Deutschland?": "ما هي عاصمة ألمانيا؟"
-      },
-      türkisch: {
-        "Wann ist die Bundesrepublik Deutschland entstanden?": "Almanya Federal Cumhuriyeti ne zaman kuruldu?",
-        "Welche Farben hat die deutsche Flagge?": "Alman bayrağının renkleri nelerdir?",
-        "Was ist die Hauptstadt von Deutschland?": "Almanya'nın başkenti nedir?"
+  // Fetch translation from Supabase with cache (array-style, like questions)
+  const fetchTranslation = useCallback(
+    async (questionId: string, language?: string) => {
+      if (!questionId) {
+        console.warn('fetchTranslation: questionId is missing');
+        return;
       }
-    };
-    
-    return translations[language]?.[originalText] || `[${language} translation for: ${originalText}]`;
-  };
+
+      const lang = (language || selectedLanguage || "persisch").trim();
+      const cacheKey = `${questionId}:${lang}`;
+
+      if (translationsCache.current[cacheKey]) {
+        setTranslation(translationsCache.current[cacheKey]);
+        return;
+      }
+
+      setTranslationLoading(true);
+      try {
+        const { data, error } = await (supabase
+          .from('question_translations' as any)
+          .select('question_text, option_a, option_b, option_c, option_d')
+          .eq('question_id', questionId)
+          .eq('language', lang) as any);
+
+        if (error) throw error;
+
+        const row = Array.isArray(data) && data.length > 0 ? (data[0] as Translation) : null;
+
+        if (row) {
+          translationsCache.current[cacheKey] = row;
+          setTranslation(row);
+        } else {
+          setTranslation(null);
+        }
+      } catch (e: any) {
+        console.error('Error fetching translation:', {
+          message: e?.message,
+          details: e?.details,
+          hint: e?.hint,
+          code: e?.code,
+        });
+        toast({
+          title: 'خطا در بارگذاری ترجمه',
+          description: e?.message ?? 'ترجمه این سؤال قابل دریافت نیست.',
+          variant: 'destructive',
+        });
+        setTranslation(null);
+      } finally {
+        setTranslationLoading(false);
+      }
+    },
+    [selectedLanguage, toast]
+  );
+
+  // Load translation when toggled on / language changes / question changes
+  useEffect(() => {
+    const q = questions[currentQuestion];
+    if (showTranslation && q?.id) {
+      fetchTranslation(q.id, selectedLanguage || "persisch");
+    } else if (!showTranslation) {
+      setTranslation(null);
+    }
+  }, [showTranslation, selectedLanguage, currentQuestion, questions, fetchTranslation]);
 
   const handleQuestionTypeChange = (checked: boolean) => {
     setIsStateSpecific(checked);
@@ -221,6 +310,12 @@ const Training = () => {
   };
 
   const question = questions[currentQuestion];
+
+  // Normalize correct option once per question
+  const correctKey = useMemo(
+    () => normalizeCorrectOption(question?.correct_option, question),
+    [question]
+  );
   
   if (loading) {
     return (
@@ -255,7 +350,7 @@ const Training = () => {
 
   return (
     <div className="min-h-screen bg-gradient-hero relative">
-      <div className="container mx-auto px-4 py-8">
+      <div className="container mx-auto px-4 py-8 relative">
         {/* Header */}
         <motion.div
           className="flex items-center justify-between mb-8"
@@ -285,10 +380,10 @@ const Training = () => {
             </p>
           </div>
 
-          <div className="w-32"></div> {/* Spacer for centering */}
+          <div className="w-32"></div>
         </motion.div>
 
-        {/* Question Type Selection */}
+        {/* Question Type Selection (State Select uses Portal to avoid z-index issues) */}
         <motion.div
           className="max-w-4xl mx-auto mb-8"
           initial={{ opacity: 0, y: 20 }}
@@ -297,7 +392,6 @@ const Training = () => {
         >
           <Card className="card-3d p-6">
             <div className="flex flex-col sm:flex-row gap-6 items-center justify-center">
-              {/* Question Type Toggle */}
               <div className="flex items-center space-x-4">
                 <div className="flex items-center gap-2">
                   <BookOpen className="h-5 w-5 text-primary" />
@@ -314,7 +408,6 @@ const Training = () => {
                 </div>
               </div>
 
-              {/* State Selection */}
               {isStateSpecific && (
                 <motion.div
                   initial={{ opacity: 0, width: 0 }}
@@ -326,7 +419,14 @@ const Training = () => {
                     <SelectTrigger className="w-64 glass border-white/20">
                       <SelectValue placeholder="Bundesland auswählen" />
                     </SelectTrigger>
-                    <SelectContent className="bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+                    {/* Use Portal/popover rendering to escape stacking context of the card */}
+                    <SelectContent
+                      position="popper"
+                      side="bottom"
+                      align="start"
+                      sideOffset={8}
+                      className="z-[9999] bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 shadow-xl border border-border"
+                    >
                       {states.map((state) => (
                         <SelectItem key={state.id} value={state.id}>
                           {state.name}
@@ -340,7 +440,7 @@ const Training = () => {
           </Card>
         </motion.div>
 
-        {/* Language Selection */}
+        {/* Language Selection (Dropdown rendered in Portal to avoid stacking issues) */}
         <motion.div
           className="flex flex-col sm:flex-row gap-4 mb-8 justify-center items-center"
           initial={{ opacity: 0, y: 20 }}
@@ -355,7 +455,11 @@ const Training = () => {
             <SelectTrigger className="w-64 glass border-white/20">
               <SelectValue placeholder="Sprache auswählen" />
             </SelectTrigger>
-            <SelectContent className="bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+            {/* key fix: use Radix Portal via position="popper" so dropdown is outside card's stacking context */}
+            <SelectContent
+              position="popper"
+              className="z-[9999] bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 shadow-xl border border-border"
+            >
               {languages.map((lang) => (
                 <SelectItem key={lang.value} value={lang.value}>
                   {lang.label}
@@ -366,25 +470,27 @@ const Training = () => {
         </motion.div>
 
         {/* Question Card */}
-        <motion.div
-          className="max-w-4xl mx-auto mb-8"
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.6, delay: 0.5 }}
-        >
+        <div className="mb-24 relative">
           <AnimatePresence mode="wait">
             <motion.div
               key={currentQuestion}
+              className="w-full max-w-4xl mx-auto relative"
               initial={{ x: 300, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: -300, opacity: 0 }}
               transition={{ duration: 0.5, ease: "easeInOut" }}
             >
-              <Card className="card-3d p-8 space-y-6">
+              {/* isolate + high z-index to ensure card's children can stack above others */}
+              <Card className="card-3d p-8 space-y-6 relative z-[100] isolate overflow-visible">
                 {question.has_image && question.image_path && (
                   <div className="mb-6">
                     <img
-                      src={`https://tnnjkbipydrhccwxofzm.supabase.co/storage/v1/object/public/question-images/${question.image_path}`}
+                      // src={`https://tnnjkbipydrhccwxofzm.supabase.co/storage/v1/object/public/question-images/${question.image_path}`}
+                      src={
+                        question.image_path.startsWith("http")
+                        ? question.image_path
+                        : `https://tnnjkbipydrhccwxofzm.supabase.co/storage/v1/object/public/question-images/${question.image_path}`
+                      }
                       alt="Frage Illustration"
                       className="w-full max-w-md mx-auto rounded-lg shadow-lg"
                     />
@@ -396,28 +502,41 @@ const Training = () => {
                     {question.question_text}
                   </h2>
 
+                  {/* Translation block: do NOT intercept clicks; also lower z-index */}
                   {showTranslation && selectedLanguage && (
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: "auto" }}
                       exit={{ opacity: 0, height: 0 }}
-                      className="p-4 bg-primary/10 rounded-lg border border-primary/20"
+                      className="p-4 bg-primary/10 rounded-lg border border-primary/20 relative z-0 pointer-events-none"
+                      style={{ pointerEvents: 'none' }}
                     >
-                      <div className="space-y-3">
-                        <h3 className="text-lg font-semibold text-primary">
-                          {getTranslatedText(question.question_text, selectedLanguage)}
-                        </h3>
-                        <div className="grid grid-cols-1 gap-2">
-                          <p className="text-primary/80"><strong>A:</strong> {getTranslatedText(question.option_a, selectedLanguage)}</p>
-                          <p className="text-primary/80"><strong>B:</strong> {getTranslatedText(question.option_b, selectedLanguage)}</p>
-                          <p className="text-primary/80"><strong>C:</strong> {getTranslatedText(question.option_c, selectedLanguage)}</p>
-                          <p className="text-primary/80"><strong>D:</strong> {getTranslatedText(question.option_d, selectedLanguage)}</p>
+                      {translationLoading ? (
+                        <div className="animate-pulse text-muted-foreground">
+                          در حال بارگذاری ترجمه...
                         </div>
-                      </div>
+                      ) : translation ? (
+                        <div className="space-y-3">
+                          <h3 className="text-lg font-semibold text-primary">
+                            {translation.question_text}
+                          </h3>
+                          <div className="grid grid-cols-1 gap-2">
+                            <p className="text-primary/80"><strong>A:</strong> {translation.option_a ?? question.option_a}</p>
+                            <p className="text-primary/80"><strong>B:</strong> {translation.option_b ?? question.option_b}</p>
+                            <p className="text-primary/80"><strong>C:</strong> {translation.option_c ?? question.option_c}</p>
+                            <p className="text-primary/80"><strong>D:</strong> {translation.option_d ?? question.option_d}</p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-sm text-muted-foreground">
+                          برای این سؤال ترجمه‌ای پیدا نشد.
+                        </div>
+                      )}
                     </motion.div>
                   )}
 
-                  <div className="grid grid-cols-1 gap-4">
+                  {/* Options: force highest priority in stacking and clicks */}
+                  <div className="grid grid-cols-1 gap-4 relative z-[200] pointer-events-auto">
                     {[
                       { key: "a", text: question.option_a },
                       { key: "b", text: question.option_b },
@@ -425,10 +544,10 @@ const Training = () => {
                       { key: "d", text: question.option_d }
                     ].map((option) => {
                       const isSelected = selectedAnswer === option.key;
-                      const isCorrect = option.key === question.correct_option;
+                      const isCorrect = correctKey ? option.key === correctKey : false;
                       const isWrong = showCorrectAnswer && isSelected && !isCorrect;
                       
-                      let cardClass = "relative p-4 cursor-pointer transition-all duration-300 border-2 rounded-lg";
+                      let cardClass = "relative p-4 cursor-pointer transition-all duration-300 border-2 rounded-lg text-left w-full bg-background pointer-events-auto";
                       
                       if (showCorrectAnswer) {
                         if (isCorrect) {
@@ -449,27 +568,23 @@ const Training = () => {
                       return (
                         <motion.div
                           key={option.key}
-                          className="w-full"
+                          className="w-full relative z-[200] pointer-events-auto"
                           whileHover={!showCorrectAnswer ? { y: -2 } : {}}
                           whileTap={!showCorrectAnswer ? { scale: 0.98 } : {}}
                           transition={{ duration: 0.2 }}
                         >
-                          <div
+                          <button
+                            type="button"
                             className={cardClass}
                             onClick={() => !showCorrectAnswer && handleAnswerSelect(option.key)}
+                            disabled={showCorrectAnswer}
                             style={{ minHeight: '60px' }}
                           >
                             <div className="flex items-center space-x-4 w-full">
                               <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-300 ${
                                 showCorrectAnswer 
-                                  ? isCorrect 
-                                    ? 'bg-green-500 text-white' 
-                                    : isWrong 
-                                      ? 'bg-red-500 text-white'
-                                      : 'bg-gray-300 text-gray-600'
-                                  : isSelected
-                                    ? 'bg-primary text-white'
-                                    : 'bg-primary/20 text-primary'
+                                  ? (isCorrect ? 'bg-green-500 text-white' : (isWrong ? 'bg-red-500 text-white' : 'bg-gray-300 text-gray-600'))
+                                  : (isSelected ? 'bg-primary text-white' : 'bg-primary/20 text-primary')
                               }`}>
                                 {option.key.toUpperCase()}
                               </div>
@@ -495,7 +610,7 @@ const Training = () => {
                                 )}
                               </div>
                             </div>
-                          </div>
+                          </button>
                         </motion.div>
                       );
                     })}
@@ -517,16 +632,15 @@ const Training = () => {
               </Card>
             </motion.div>
           </AnimatePresence>
-        </motion.div>
+        </div>
 
-        {/* Navigation */}
+        {/* Navigation - keep it below card in stacking */}
         <motion.div
-          className="flex flex-col sm:flex-row gap-6 justify-center items-center"
+          className="flex flex-col sm:flex-row gap-6 justify-center items-center mt-8 relative z-[10]"
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 0.6 }}
         >
-          {/* Previous/Next Buttons */}
           <div className="flex gap-4">
             <Button
               onClick={prevQuestion}
@@ -551,7 +665,6 @@ const Training = () => {
             </Button>
           </div>
 
-          {/* Jump to Question */}
           <div className="flex items-center gap-2">
             <Hash className="h-5 w-5 text-muted-foreground" />
             <Input
@@ -560,7 +673,7 @@ const Training = () => {
               onChange={(e) => setJumpToQuestion(e.target.value)}
               className="w-24 glass border-white/20"
               type="number"
-              min="1"
+              min={1}
               max={questions.length}
             />
             <Button
